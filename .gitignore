@@ -1,0 +1,10 @@
+__pycache__/
+*.py[codz]
+.venv/
+venv/
+.env
+.env.*
+*.log
+.kube/
+*.pem
+*.key

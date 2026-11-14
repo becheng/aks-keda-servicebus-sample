@@ -1,0 +1,60 @@
+# Variables for the Azure Service Bus KEDA tutorial.
+#
+# Source this file from every script with: source ./00-variables.sh
+# It first pulls in the values shared by the three KEDA tutorials (cluster, ACR, shared managed
+# identity, scaling knobs), then adds the ones specific to this one.
+
+# Variables. The shared file is located relative to THIS file, not to the working directory: a bare
+# `source ../../00-variables.sh` resolves against $PWD, so it works only when the caller has already
+# cd'd into this folder and fails for anything that sources this file by path from somewhere else.
+source "$(dirname "${BASH_SOURCE[0]}")/../../00-variables.sh"
+
+# Timings, overriding the shared defaults for this tutorial only.
+#
+# These have to live here rather than in scaledobject.yml: 06-deploy-consumer.sh patches the manifest
+# with yq before applying it, so whatever pollingInterval, cooldownPeriod or scaleUp policy the YAML
+# carries is replaced by the values below. Editing the manifest alone has no effect.
+#
+# The values are tuned to keep a live demonstration short. The scaler is asked for the active message
+# count every second, and the workload is deactivated ten seconds after the queue empties, so the
+# round trip from zero to the ceiling and back fits in about a minute.
+POLLING_INTERVAL=1
+COOLDOWN_PERIOD=10
+SCALE_DOWN_STABILIZATION_SECONDS=10
+SCALE_UP_PERIOD_SECONDS=10
+
+# The backlog has to outlast the climb. The autoscaler asks for ceil(backlog / SCALING_THRESHOLD)
+# replicas, capped at MAX_REPLICAS, but it only adds one of them per SCALE_UP_PERIOD_SECONDS, so it
+# reaches the ceiling only if MAX_REPLICAS * SCALING_THRESHOLD messages are still queued by the time
+# it gets there. Too small a backlog drains while the ramp is still climbing and the deployment turns
+# around before reaching the top. This many messages keep the consumer at the ceiling for about twenty
+# seconds, and the round trip from zero and back takes about a minute.
+MESSAGE_COUNT=80
+
+# Azure Service Bus. Real Azure (and the emulator) reject namespace names ending in -sb or -mgmt,
+# and require between 6 and 50 characters.
+SERVICE_BUS_NAMESPACE_NAME="${PREFIX}-servicebus-${SUFFIX}"
+SERVICE_BUS_SKU="Standard"
+SERVICE_BUS_QUEUE_NAME="work-items"
+SERVICE_BUS_AUTHORIZATION_RULE="RootManageSharedAccessKey"
+
+# The role the KEDA operator needs to read the queue's message count, granted on the namespace to
+# the shared managed identity's principal id.
+# https://learn.microsoft.com/en-us/azure/aks/keda-workload-identity
+ROLE="Azure Service Bus Data Owner"
+
+# Container images
+PRODUCER_IMAGE_NAME="keda-servicebus-producer"
+CONSUMER_IMAGE_NAME="keda-servicebus-consumer"
+
+# Kubernetes. These names must match the ones in the YAML manifests in this folder.
+NAMESPACE="keda-service-bus-sample"
+CONFIG_MAP_NAME="sb-app-config"
+SERVICE_ACCOUNT_NAME="sb-app"
+FEDERATED_IDENTITY_NAME_APP="service-bus-app"
+SECRET_NAME="sb-connection"
+DEPLOYMENT_NAME="sb-consumer"
+PRODUCER_JOB_NAME="sb-producer"
+TRIGGER_AUTHENTICATION_NAME="sb-trigger-auth"
+SCALED_OBJECT_NAME="sb-scaler"
+HPA_NAME="keda-hpa-${SCALED_OBJECT_NAME}"
