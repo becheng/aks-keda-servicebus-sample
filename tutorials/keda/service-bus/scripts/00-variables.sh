@@ -29,7 +29,8 @@ SCALE_UP_PERIOD_SECONDS=10
 # it gets there. Too small a backlog drains while the ramp is still climbing and the deployment turns
 # around before reaching the top. This many messages keep the consumer at the ceiling for about twenty
 # seconds, and the round trip from zero and back takes about a minute.
-MESSAGE_COUNT=80
+MESSAGE_COUNT=1000
+MESSAGE_RATE_PER_SECOND=1000
 
 # Azure Service Bus. Real Azure (and the emulator) reject namespace names ending in -sb or -mgmt,
 # and require between 6 and 50 characters.
