@@ -17,9 +17,11 @@ The sample sends 80 messages. It scales the consumer from zero to at most four r
 
 Only the Service Bus sample and its required shared settings are included. The source folder layout is retained so relative script paths continue to work.
 
-## Run against LocalStack
+## Run the scaling demonstration
 
-This repository targets Azure. Emulator compatibility remains in the application code. See the [upstream LocalStack setup guide](https://github.com/localstack-samples/aks-samples#run-against-localstack) for emulator instructions.
+Use this prompt to run the existing demonstration:
+
+> Run the existing Service Bus scaling demonstration. Verify the selected Azure subscription and AKS context. Confirm the `work-items` queue is empty and the `sb-consumer` deployment has zero replicas. From `tutorials\keda\service-bus\scripts`, run `07-run-producer.sh` immediately followed by `08-watch-scaling.sh`. Use Git Bash with Windows tools and handle line endings correctly. Do not provision resources, rebuild images, or run cleanup. Report the observed scaling and queue results.
 
 ## Attribution
 
