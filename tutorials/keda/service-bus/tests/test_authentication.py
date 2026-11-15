@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 import runpy
+import sys
+import types
 import unittest
 from unittest.mock import patch
 
@@ -10,8 +12,24 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class AuthenticationTests(unittest.TestCase):
     def run_app(self, app, environment, verify, credential_error=None):
+        azure = types.ModuleType("azure")
+        azure.__path__ = []
+        identity = types.ModuleType("azure.identity")
+        identity.WorkloadIdentityCredential = object
+        servicebus = types.ModuleType("azure.servicebus")
+        servicebus.__path__ = []
+        servicebus.ServiceBusClient = object
+        servicebus.ServiceBusMessage = str
+        exceptions = types.ModuleType("azure.servicebus.exceptions")
+        exceptions.ServiceBusError = type("ServiceBusError", (Exception,), {})
         with (
             patch.dict(os.environ, environment, clear=True),
+            patch.dict(sys.modules, {
+                "azure": azure,
+                "azure.identity": identity,
+                "azure.servicebus": servicebus,
+                "azure.servicebus.exceptions": exceptions,
+            }),
             patch("azure.identity.WorkloadIdentityCredential") as credential_type,
             patch("azure.servicebus.ServiceBusClient") as client_type,
             patch("signal.signal"),

@@ -74,6 +74,7 @@ cat configmap.yml |
   yq "(.metadata.namespace)|=\"$NAMESPACE\"" |
   yq "(.data.QUEUE_NAME)|=\"$SERVICE_BUS_QUEUE_NAME\"" |
   yq "(.data.MESSAGE_COUNT)|=\"$MESSAGE_COUNT\"" |
+  yq "(.data.MESSAGE_RATE_PER_SECOND)|=\"$MESSAGE_RATE_PER_SECOND\"" |
   yq "(.data.WORK_SECONDS)|=\"$WORK_SECONDS\"" |
   yq "(.data.BATCH_SIZE)|=\"$BATCH_SIZE\"" |
   yq "(.data.SERVICEBUS_FULLY_QUALIFIED_NAMESPACE)|=\"$SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE\"" |

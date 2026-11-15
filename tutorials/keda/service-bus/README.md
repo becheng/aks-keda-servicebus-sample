@@ -39,7 +39,7 @@ flowchart LR
         end
     end
 
-    producer -->|"sends 80 messages"| queue
+    producer -->|"sends 80 messages<br/>target 1,000 per second"| queue
     queue -->|"receives and completes messages"| consumer
     operator -->|"reads activeMessageCount<br/>with workload identity"| queue
     scaledobject -.->|"read by"| operator
@@ -98,7 +98,7 @@ After the prerequisites are ready, run scripts `01` through `08` in order. Each 
 | `04-build-docker-images.sh` | Builds the producer and consumer images from [src/producer](src/producer) and [src/consumer](src/consumer), each of which has its own `Dockerfile`. | Two local images tagged `v1`. |
 | `05-push-docker-images.sh` | Logs into the registry, reads its login server, then tags and pushes both images. | Both images are in `akskeda2194b8`. |
 | `06-deploy-consumer.sh` | Creates the namespace, application service account and config map. Creates a connection-string secret only for the emulator. Applies the consumer at zero replicas and the KEDA resources. | KEDA creates `keda-hpa-sb-scaler`. The consumer uses workload identity on Azure. |
-| `07-run-producer.sh` | Deletes any previous producer `Job`, then runs it to send 80 messages and waits for it to complete. | The Job completes. Consumers can start processing as soon as messages arrive. |
+| `07-run-producer.sh` | Deletes any previous producer `Job`, then runs it to send 80 messages with a target rate of 1,000 per second and waits for it to complete. | The Job completes and logs its achieved send rate. Consumers can start processing as soon as messages arrive. |
 | `08-watch-scaling.sh` | Asserts the behaviour: KEDA owns the workload, the consumer scales out from zero to at least two ready replicas, the queue drains, and the consumer scales back to zero. | `PASS` for each check and a final `SUCCESS` line. On failure it dumps the operator log, the `ScaledObject`, the autoscaler and the events. |
 | `09-cleanup.sh` | Deletes the tutorial namespace. With `--disable-keda` it also turns the add-on off on the cluster. | The namespace is gone; the shared identity and the operator binding are left for the other tutorials. |
 
@@ -123,7 +123,7 @@ Every manifest in [scripts/](scripts/) is valid, applyable YAML whose environmen
 | Manifest | What it creates | Filled in at apply time |
 | --- | --- | --- |
 | `namespace.yml` | The `keda-service-bus-sample` namespace that holds everything else. | The namespace name. |
-| `configmap.yml` | `sb-app-config`, the non-secret settings both applications read as environment variables. | The queue name, the message count, the seconds of work per message and the batch size. |
+| `configmap.yml` | `sb-app-config`, the non-secret settings both applications read as environment variables. | The queue name, message count, producer target rate, seconds of work per message and batch size. |
 | `serviceaccount.yml` | `sb-app`, the application service account. | The managed identity client ID and tenant ID. |
 | `secret.yml` | `sb-connection`, used only by the emulator. | The emulator connection string, base64 encoded. Azure deployments do not create or mount this Secret. |
 | `deployment.yml` | `sb-consumer`, the workload KEDA scales, at `replicas: 0`. | The consumer image, service account, pull policy and configuration references. The Azure pod has the workload-identity label and no Secret reference. |
@@ -141,7 +141,7 @@ The build script targets `linux/amd64` to match the `Standard_D4ds_v5` AKS nodes
 
 | Path | What it is |
 | --- | --- |
-| `src/producer/producer.py` | Sends `MESSAGE_COUNT` messages to the queue in batches with `ServiceBusClient`, logs its progress, and exits 0 so the `Job` completes. |
+| `src/producer/producer.py` | Sends `MESSAGE_COUNT` messages in batches with bounded concurrent senders. It schedules sends against a monotonic clock, logs completed-message throughput, and exits 0 so the `Job` completes. |
 | `src/consumer/consumer.py` | Receives batches of `BATCH_SIZE`, spends `WORK_SECONDS` on each message and completes it. Deliberately resilient: a message whose lock is lost or whose AMQP link drops before it is settled is logged and skipped (Service Bus redelivers it), and a receiver failure reconnects rather than exiting, because a crash-looping consumer would burn the queue's `maxDeliveryCount` and dead-letter the backlog instead of processing it. |
 | `src/{producer,consumer}/requirements.txt` | Pinned `azure-servicebus` and `azure-identity` dependencies, installed at image build time. |
 | `src/{producer,consumer}/Dockerfile` | Two-stage build on `python:3.13-slim` that installs the dependencies into a virtual environment and runs as a non-root user. |
@@ -150,9 +150,11 @@ The build script targets `linux/amd64` to match the `Standard_D4ds_v5` AKS nodes
 
 **The scaling loop.** The `ScaledObject` names the consumer `Deployment` as its target and declares one `azure-servicebus` trigger with `messageCount: "5"`. The KEDA operator polls the queue's active message count every five seconds. While the queue is empty the Deployment stays at zero replicas. As soon as messages appear the operator activates it to one replica and publishes the count as an external metric, and the HorizontalPodAutoscaler that KEDA created (`keda-hpa-sb-scaler`) raises the replica count toward `ceil(messages / 5)`, capped at `maxReplicaCount: 4`. When the queue is empty again the autoscaler scales the Deployment back to zero after the `cooldownPeriod`.
 
-The producer sends 80 messages and each consumer replica sleeps two seconds per message, so a single replica cannot drain the backlog before the autoscaler reacts. That is what makes the scale-out observable rather than a race.
+The producer targets 1,000 messages per second, but the default run sends only 80 messages. That short burst preserves the scale-out demo; it does not sustain the target for a full second. To measure a sustained send rate, increase `MESSAGE_COUNT` in `scripts/00-variables.sh` before running `06-deploy-consumer.sh` and `07-run-producer.sh`. Each consumer replica sleeps two seconds per message, so the backlog remains visible while the autoscaler reacts.
 
-To check the application authentication branches offline, run `python -m unittest discover -s service-bus/tests -p 'test_*.py'` from `tutorials/keda` with the sample dependencies installed. These tests cover Azure workload identity, emulator connection strings, and failure without credential fallback.
+The producer uses up to eight worker threads. Each worker creates and reuses its own Service Bus client and sender; it does not share SDK objects across threads. The [Microsoft Python SDK thread-safety guidance](https://learn.microsoft.com/python/api/overview/azure/servicebus-readme?view=azure-python#thread-safety) says these objects are not guaranteed to be thread-safe and recommends native async APIs when possible. This synchronous sample confines each client's lifecycle and use to one worker thread. The producer spaces batch submissions using a monotonic clock and reports the average rate of completed sends when the job finishes. This is a target, not a throughput guarantee: Service Bus capacity, network latency, and available pod CPU can reduce the achieved rate. The offline producer test uses delayed sends to verify three interior one-second completion windows, apart from startup and final-send effects; it does not measure live Azure throughput.
+
+To check the producer rate and application authentication branches offline, run `python -m unittest discover -s service-bus/tests -p 'test_*.py'` from `tutorials/keda`. The tests use Azure SDK stubs and make no live Azure requests. They cover concurrent producer throughput, Azure workload identity, emulator connection strings, and failure without credential fallback.
 
 **Why the ramp is gradual.** Left to its defaults the autoscaler may add four replicas, or double the count, every fifteen seconds. With a backlog of `MESSAGE_COUNT` messages against a per-replica target of `SCALING_THRESHOLD`, the computed target is far above `MAX_REPLICAS`, so the default policy would jump straight to the cap in one step and there would be no ramp to watch. The `ScaledObject` therefore sets an explicit `scaleUp` policy of `SCALE_UP_PODS` replica per `SCALE_UP_PERIOD_SECONDS` seconds, so the scale-out is visible as `0 -> 1 -> 2 -> 3 -> 4`. Scale-in is left aggressive on purpose: once the backlog is gone there is nothing to be gradual about. Both knobs live in [../00-variables.sh](../00-variables.sh), and [08-watch-scaling.sh](scripts/08-watch-scaling.sh) records the observed steps and fails if the deployment reaches the cap in a single one.
 
